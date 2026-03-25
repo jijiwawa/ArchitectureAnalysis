@@ -4,6 +4,10 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 // 原生 C 实现
 float vector_l2_squared_distance_native(int dim, const float* ax, const float* bx);
 float vector_inner_product_native(int dim, const float* ax, const float* bx);
@@ -17,6 +21,10 @@ float vector_l2_squared_distance_neon(int dim, const float* ax, const float* bx)
 float vector_inner_product_neon(int dim, const float* ax, const float* bx);
 double vector_cosine_similarity_neon(int dim, const float* ax, const float* bx);
 float vector_l1_distance_neon(int dim, const float* ax, const float* bx);
+#endif
+
+#ifdef __cplusplus
+}
 #endif
 
 #endif

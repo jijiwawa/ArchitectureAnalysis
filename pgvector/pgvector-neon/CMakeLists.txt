@@ -33,14 +33,24 @@ if(GTest_FOUND)
     enable_testing()
     
     add_executable(test_all tests/test_all.cpp)
-    target_link_libraries(test_all pgvector_neon GTest::gtest GTest::gtest_main pthread)
+    # 链接顺序很重要：先链接库，再链接 GTest
+    target_link_libraries(test_all 
+        pgvector_neon 
+        GTest::gtest 
+        GTest::gtest_main 
+        pthread
+    )
     
     add_test(NAME AllTests COMMAND test_all)
+    
+    # 简单测试（不需要 GTest）
+    add_executable(simple_test tests/simple_test.cpp)
+    target_link_libraries(simple_test pgvector_neon pthread)
 endif()
 
 # 基准测试
 add_executable(benchmark tests/benchmark.cpp)
-target_link_libraries(benchmark pgvector_neon)
+target_link_libraries(benchmark pgvector_neon pthread)
 
 # 安装
 install(TARGETS pgvector_neon DESTINATION lib)
