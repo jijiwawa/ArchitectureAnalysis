@@ -1,8 +1,0 @@
-{
-  "name": "auto-bind",
-  "version": "1.0.0",
-  "description": "服务器应用自动绑核工具。支持网卡中断绑核、进程/线程 CPU 绑核、NUMA 内存绑定。",
-  "author": "BOSS",
-  "created_at": "2026-03-23",
-  "tags": ["numa", "cpu-binding", "performance", "optimization", "server"]
-}
