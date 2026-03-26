@@ -1,0 +1,53 @@
+警告: 基线文件不存在: result/base_10000.json，将重新运行 base 测试对比
+========================================
+  HashSet 测试框架
+========================================
+Scale: 10000
+Runs: 1
+开始时间: 2026-03-26 19:39:03
+
+[1/4] 创建 build 目录...
+      完成
+
+[2/4] 编译测试程序...
+      编译 test_functional_opt...
+      完成
+      编译 test_single_version_optimize...
+      完成
+      编译 test_performance (含 base 对比)...
+      完成
+
+[3/4] 运行 optimize 功能测试...
+
+========================================
+  Functional Test: std vs optimize
+========================================
+
+[testInit]
+[testInsert]
+[testRemove]
+[testResizeExpand]
+[testLargeScaleInsert]
+[testMixedOperations]
+[testEdgeCases]
+
+========================================
+All functional tests completed!
+========================================
+
+[4/4] 运行 optimize 线程安全测试...
+
+========================================
+  Thread Safety Test
+  Threads: 8, Ops/Thread: 10000
+========================================
+
+=== Testing OptimizeHashSet ===
+OptimizeHashSet completed without crash, final size=0
+
+========================================
+  Base vs Optimize 性能对比
+========================================
+Threads    Dist       Base(M/s)    Optimize(M/s) 提升%   
+----------------------------------------
+run_tests.sh: line 173: bc: command not found

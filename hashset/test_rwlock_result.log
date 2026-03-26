@@ -1,0 +1,85 @@
+基线: result/base_1000000.json (18 条记录)
+========================================
+  HashSet 测试框架
+========================================
+Scale: 1000000
+Runs: 3
+开始时间: 2026-03-26 20:52:49
+
+[1/4] 创建 build 目录...
+      完成
+
+[2/4] 编译测试程序...
+      编译 test_functional_opt...
+      完成
+      编译 test_single_version_optimize...
+      完成
+      编译 test_performance (含 base 对比)...
+      完成
+
+[3/4] 运行 optimize 功能测试...
+
+========================================
+  Functional Test: std vs optimize
+========================================
+
+[testInit]
+[testInsert]
+[testRemove]
+[testResizeExpand]
+[testLargeScaleInsert]
+[testMixedOperations]
+[testEdgeCases]
+
+========================================
+All functional tests completed!
+========================================
+
+[4/4] 运行 optimize 线程安全测试...
+
+========================================
+  Thread Safety Test
+  Threads: 8, Ops/Thread: 10000
+========================================
+
+=== Testing OptimizeHashSet ===
+OptimizeHashSet completed without crash, final size=0
+
+========================================
+  Base vs Optimize 性能对比
+========================================
+Threads    Dist       Base(M/s)    Optimize(M/s) 提升%   
+----------------------------------------
+1          uniform    42.84        38.80        -9.43     %
+2          uniform    17.88        24.67        37.94     %
+4          uniform    15.63        10.55        -32.47    %
+8          uniform    10.75        4.20         -60.91    %
+16         uniform    7.56         4.60         -39.13    %
+32         uniform    7.48         4.33         -42.06    %
+---- [uniform] 加权平均: -20.17% ----
+
+1          gaussian   58.44        61.89        5.90      %
+2          gaussian   21.22        26.46        24.72     %
+4          gaussian   17.48        8.62         -50.68    %
+8          gaussian   12.68        4.14         -67.35    %
+16         gaussian   9.52         4.56         -52.07    %
+32         gaussian   8.51         4.59         -45.99    %
+---- [gaussian] 加权平均: -20.60% ----
+
+1          localized  97.08        113.55       16.96     %
+2          localized  28.91        26.50        -8.32     %
+4          localized  23.50        9.08         -61.36    %
+8          localized  15.98        3.94         -75.34    %
+16         localized  12.70        4.70         -62.98    %
+32         localized  11.09        4.65         -58.04    %
+---- [localized] 加权平均: -25.14% ----
+
+----------------------------------------
+总加权平均: -21.97%
+结束时间: 2026-03-26 20:53:14
+结果已写入 report/result.json
+========================================
+
+========================================
+  PASSED: 所有测试通过!
+========================================
