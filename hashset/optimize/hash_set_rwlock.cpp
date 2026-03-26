@@ -1,11 +1,11 @@
 #include "hash_set_rwlock.h"
 #include <mutex>
 
-OptimizeHashSet::OptimizeHashSet() : capacity_(1024), size_(0) {
+OptimizeHashSetRwLock::OptimizeHashSetRwLock() : capacity_(1024), size_(0) {
     buckets_ = new Node*[capacity_]();
 }
 
-OptimizeHashSet::~OptimizeHashSet() {
+OptimizeHashSetRwLock::~OptimizeHashSetRwLock() {
     std::unique_lock<std::shared_mutex> lock(rwlock_);
     for (int i = 0; i < capacity_; ++i) {
         Node* cur = buckets_[i];
@@ -18,7 +18,7 @@ OptimizeHashSet::~OptimizeHashSet() {
     delete[] buckets_;
 }
 
-void OptimizeHashSet::init() {
+void OptimizeHashSetRwLock::init() {
     std::unique_lock<std::shared_mutex> lock(rwlock_);
     for (int i = 0; i < capacity_; ++i) {
         Node* cur = buckets_[i];
@@ -32,7 +32,7 @@ void OptimizeHashSet::init() {
     size_.store(0);
 }
 
-bool OptimizeHashSet::containsLocked(int64_t value) const {
+bool OptimizeHashSetRwLock::containsLocked(int64_t value) const {
     int h = hash(value);
     Node* cur = buckets_[h];
     while (cur) {
@@ -42,7 +42,7 @@ bool OptimizeHashSet::containsLocked(int64_t value) const {
     return false;
 }
 
-void OptimizeHashSet::insert(int64_t value) {
+void OptimizeHashSetRwLock::insert(int64_t value) {
     std::unique_lock<std::shared_mutex> lock(rwlock_);
     
     if (containsLocked(value)) return;
@@ -59,16 +59,16 @@ void OptimizeHashSet::insert(int64_t value) {
 }
 
 // 优化：使用读锁，允许多线程并发读
-bool OptimizeHashSet::contains(int64_t value) {
+bool OptimizeHashSetRwLock::contains(int64_t value) {
     std::shared_lock<std::shared_mutex> lock(rwlock_);  // 读锁
     return containsLocked(value);
 }
 
-int OptimizeHashSet::size() {
+int OptimizeHashSetRwLock::size() {
     return size_.load(std::memory_order_relaxed);
 }
 
-void OptimizeHashSet::remove(int64_t value) {
+void OptimizeHashSetRwLock::remove(int64_t value) {
     std::unique_lock<std::shared_mutex> lock(rwlock_);
     int h = hash(value);
     Node* cur = buckets_[h];
@@ -87,7 +87,7 @@ void OptimizeHashSet::remove(int64_t value) {
     }
 }
 
-void OptimizeHashSet::resize(int newCapacity) {
+void OptimizeHashSetRwLock::resize(int newCapacity) {
     std::unique_lock<std::shared_mutex> lock(rwlock_);
     
     int oldCap = capacity_;
@@ -113,7 +113,7 @@ void OptimizeHashSet::resize(int newCapacity) {
     size_.store(count, std::memory_order_relaxed);
 }
 
-void OptimizeHashSet::rehash() {
+void OptimizeHashSetRwLock::rehash() {
     // 已持有写锁
     int oldCap = capacity_;
     Node** oldBucks = buckets_;

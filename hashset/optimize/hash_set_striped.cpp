@@ -1,10 +1,10 @@
 #include "hash_set_striped.h"
 
-OptimizeHashSet::OptimizeHashSet() : capacity_(1024), size_(0), segment_count_(16), segment_size_(64) {
+OptimizeHashSetStriped::OptimizeHashSetStriped() : capacity_(1024), size_(0), segment_count_(16), segment_size_(64) {
     buckets_ = new Bucket[capacity_]();
 }
 
-OptimizeHashSet::~OptimizeHashSet() {
+OptimizeHashSetStriped::~OptimizeHashSetStriped() {
     // 锁定所有分段
     for (int i = 0; i < segment_count_; i++) {
         buckets_[i * segment_size_].mutex.lock();
@@ -23,7 +23,7 @@ OptimizeHashSet::~OptimizeHashSet() {
     // 析构时无需解锁
 }
 
-void OptimizeHashSet::init() {
+void OptimizeHashSetStriped::init() {
     // 锁定所有分段
     for (int i = 0; i < segment_count_; i++) {
         buckets_[i * segment_size_].mutex.lock();
@@ -46,7 +46,7 @@ void OptimizeHashSet::init() {
     }
 }
 
-bool OptimizeHashSet::containsLocked(int64_t value, int h) const {
+bool OptimizeHashSetStriped::containsLocked(int64_t value, int h) const {
     Node* cur = buckets_[h].head;
     while (cur) {
         if (cur->value == value) return true;
@@ -55,7 +55,7 @@ bool OptimizeHashSet::containsLocked(int64_t value, int h) const {
     return false;
 }
 
-void OptimizeHashSet::insert(int64_t value) {
+void OptimizeHashSetStriped::insert(int64_t value) {
     int h = hash(value);
     std::lock_guard<std::mutex> lock(getSegmentLock(h));
     
@@ -67,17 +67,17 @@ void OptimizeHashSet::insert(int64_t value) {
     size_.fetch_add(1, std::memory_order_relaxed);
 }
 
-bool OptimizeHashSet::contains(int64_t value) {
+bool OptimizeHashSetStriped::contains(int64_t value) {
     int h = hash(value);
     std::lock_guard<std::mutex> lock(getSegmentLock(h));
     return containsLocked(value, h);
 }
 
-int OptimizeHashSet::size() {
+int OptimizeHashSetStriped::size() {
     return size_.load(std::memory_order_relaxed);
 }
 
-void OptimizeHashSet::remove(int64_t value) {
+void OptimizeHashSetStriped::remove(int64_t value) {
     int h = hash(value);
     std::lock_guard<std::mutex> lock(getSegmentLock(h));
 
@@ -97,7 +97,7 @@ void OptimizeHashSet::remove(int64_t value) {
     }
 }
 
-void OptimizeHashSet::resize(int newCapacity) {
+void OptimizeHashSetStriped::resize(int newCapacity) {
     // 锁定所有分段（避免死锁：按顺序锁定）
     for (int i = 0; i < segment_count_; i++) {
         buckets_[i * segment_size_].mutex.lock();
@@ -132,7 +132,7 @@ void OptimizeHashSet::resize(int newCapacity) {
     }
 }
 
-void OptimizeHashSet::rehash() {
+void OptimizeHashSetStriped::rehash() {
     // 已持有所有锁
     int oldCap = capacity_;
     Bucket* oldBucks = buckets_;

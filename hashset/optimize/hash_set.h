@@ -1,23 +1,34 @@
-#ifndef OPTIMIZE_HASH_SET_H
-#define OPTIMIZE_HASH_SET_H
+#ifndef OPTIMIZE_HASH_SET_CACHE_H
+#define OPTIMIZE_HASH_SET_CACHE_H
 
 #include "../common/i_hash_set.h"
-#include "../common/node.h"
 #include <mutex>
 #include <atomic>
+#include <vector>
 
-// 优化版本：无锁size + 预分配 + 优化扩容
+// 优化版本：缓存友好的连续内存 + 哈希指纹快速比较
 class OptimizeHashSet : public IHashSet {
 private:
-    Node** buckets_;
+    struct Bucket {
+        std::vector<int64_t> values;        // 连续内存存储
+        std::vector<uint8_t> fingerprints;  // 哈希指纹（用于快速比较）
+        std::mutex mutex;
+        
+        Bucket() = default;
+    };
+
+    Bucket* buckets_;
     int capacity_;
-    std::atomic<int> size_;  // 原子计数
-    std::mutex mutex_;
+    std::atomic<int> size_;
     
     int hash(int64_t value) const {
-        // 简单hash，保持快速
         int h = value % capacity_;
         return h < 0 ? h + capacity_ : h;
+    }
+    
+    // 哈希指纹（取高8位）
+    uint8_t fingerprint(int64_t value) const {
+        return static_cast<uint8_t>(value >> 56);
     }
     
     void rehash();

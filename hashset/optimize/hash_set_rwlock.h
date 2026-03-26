@@ -4,10 +4,11 @@
 #include "../common/i_hash_set.h"
 #include "../common/node.h"
 #include <shared_mutex>
+#include <mutex>
 #include <atomic>
 
-// 优化版本：读写锁 + 无锁size
-class OptimizeHashSet : public IHashSet {
+// 读写锁版本
+class OptimizeHashSetRwLock : public IHashSet {
 private:
     Node** buckets_;
     int capacity_;
@@ -23,8 +24,8 @@ private:
     bool containsLocked(int64_t value) const;
 
 public:
-    OptimizeHashSet();
-    ~OptimizeHashSet();
+    OptimizeHashSetRwLock();
+    ~OptimizeHashSetRwLock();
 
     void init() override;
     void insert(int64_t value) override;

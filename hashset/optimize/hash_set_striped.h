@@ -7,8 +7,8 @@
 #include <atomic>
 #include <vector>
 
-// 优化版本：分段锁（极致并发性能）
-class OptimizeHashSet : public IHashSet {
+// 分段锁版本
+class OptimizeHashSetStriped : public IHashSet {
 private:
     struct Bucket {
         Node* head;
@@ -38,8 +38,8 @@ private:
     bool containsLocked(int64_t value, int h) const;
 
 public:
-    OptimizeHashSet();
-    ~OptimizeHashSet();
+    OptimizeHashSetStriped();
+    ~OptimizeHashSetStriped();
 
     void init() override;
     void insert(int64_t value) override;
