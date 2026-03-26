@@ -83,13 +83,16 @@ mkdir -p "$BUILD_DIR"
 echo "      完成"
 echo ""
 
-# 编译测试程序
+# 编译测试程序（仅 optimize 使用优化编译选项）
 echo "[2/4] 编译测试程序..."
 cd tests
 
 echo "      编译 test_functional_opt..."
-g++ -std=c++17 -O3 -march=native -mtune=native -pthread -I.. -DVERSION_optimize ../std/hash_set.cpp ../optimize/hash_set.cpp \
-    test_functional.cpp -o "$BUILD_DIR/test_functional_opt"
+# std: 基础编译选项, optimize: 优化编译选项
+g++ -std=c++17 -O2 -c -I.. ../std/hash_set.cpp -o "$BUILD_DIR/std_hash_set.o"
+g++ -std=c++17 -O3 -march=native -mtune=native -c -I.. ../optimize/hash_set.cpp -o "$BUILD_DIR/optimize_hash_set.o"
+g++ -std=c++17 -O2 -pthread "$BUILD_DIR/std_hash_set.o" "$BUILD_DIR/optimize_hash_set.o" \
+    test_functional.cpp -DVERSION_optimize -o "$BUILD_DIR/test_functional_opt"
 echo "      完成"
 
 echo "      编译 test_single_version_optimize..."
@@ -98,7 +101,11 @@ g++ -std=c++17 -O3 -march=native -mtune=native -pthread -I.. -DUSE_OPTIMIZE ../o
 echo "      完成"
 
 echo "      编译 test_performance (含 base 对比)..."
-g++ -std=c++17 -O3 -march=native -mtune=native -pthread -I.. ../std/hash_set.cpp ../base/hash_set.cpp ../optimize/hash_set.cpp \
+# base, std: 基础编译选项, optimize: 优化编译选项
+g++ -std=c++17 -O2 -c -I.. ../std/hash_set.cpp -o "$BUILD_DIR/std_hash_set.o"
+g++ -std=c++17 -O2 -c -I.. ../base/hash_set.cpp -o "$BUILD_DIR/base_hash_set.o"
+g++ -std=c++17 -O3 -march=native -mtune=native -c -I.. ../optimize/hash_set.cpp -o "$BUILD_DIR/optimize_hash_set.o"
+g++ -std=c++17 -O2 -pthread "$BUILD_DIR/std_hash_set.o" "$BUILD_DIR/base_hash_set.o" "$BUILD_DIR/optimize_hash_set.o" \
     test_performance.cpp -o "$BUILD_DIR/test_performance"
 echo "      完成"
 
@@ -163,9 +170,10 @@ for dist in uniform gaussian localized; do
         contains_opt=$(echo "$result_opt" | grep -o '"contains_ops_sec":[0-9]*' | cut -d: -f2)
 
         if [ -n "$contains_base" ] && [ -n "$contains_opt" ] && [ "$contains_base" -gt 0 ]; then
-            improvement=$(echo "scale=2; ($contains_opt - $contains_base) * 100 / $contains_base" | bc)
-            base_mops=$(echo "scale=2; $contains_base / 1000000" | bc)
-            opt_mops=$(echo "scale=2; $contains_opt / 1000000" | bc)
+            # 使用 awk 替代 bc
+            improvement=$(awk "BEGIN {printf \"%.2f\", ($contains_opt - $contains_base) * 100.0 / $contains_base}")
+            base_mops=$(awk "BEGIN {printf \"%.2f\", $contains_base / 1000000.0}")
+            opt_mops=$(awk "BEGIN {printf \"%.2f\", $contains_opt / 1000000.0}")
             printf "%-10s %-10s %-12s %-12s %-10s%%\n" "$threads" "$dist" "$base_mops" "$opt_mops" "$improvement"
             improvements[$threads]=$improvement
         else
@@ -183,7 +191,7 @@ for dist in uniform gaussian localized; do
                 printf "%.2f", w1*i1 + w*i2 + w*i4 + w*i8 + w*i16 + w*i32
             }')
         dist_weighted_avg[$dist]=$weighted_avg
-        total_weighted_avg=$(echo "$total_weighted_avg + $weighted_avg" | bc)
+        total_weighted_avg=$(awk "BEGIN {printf \"%.2f\", $total_weighted_avg + $weighted_avg}")
         dist_count=$((dist_count + 1))
         echo "---- [$dist] 加权平均: ${weighted_avg}% ----"
     else
@@ -192,7 +200,7 @@ for dist in uniform gaussian localized; do
     echo ""
 done
 
-overall_avg=$(echo "scale=2; $total_weighted_avg / $dist_count" | bc)
+overall_avg=$(awk "BEGIN {printf \"%.2f\", $total_weighted_avg / $dist_count}")
 END_TIME=$(date '+%Y-%m-%d %H:%M:%S')
 echo "----------------------------------------"
 echo "总加权平均: ${overall_avg}%"
