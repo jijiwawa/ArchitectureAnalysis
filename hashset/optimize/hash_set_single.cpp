@@ -1,142 +1,139 @@
 #include "hash_set_single.h"
+#include <arm_neon.h>
 
 OptimizeHashSetSingle::OptimizeHashSetSingle() : capacity_(1024), size_(0) {
-    buckets_ = new Node*[capacity_]();
+    slots_ = new Slot[capacity_]();
+    for (int i = 0; i < capacity_; i++) {
+        slots_[i].occupied = 0;
+    }
 }
 
 OptimizeHashSetSingle::~OptimizeHashSetSingle() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    for (int i = 0; i < capacity_; ++i) {
-        Node* cur = buckets_[i];
-        while (cur) {
-            Node* next = cur->next;
-            delete cur;
-            cur = next;
-        }
-    }
-    delete[] buckets_;
+    delete[] slots_;
 }
 
 void OptimizeHashSetSingle::init() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    for (int i = 0; i < capacity_; ++i) {
-        Node* cur = buckets_[i];
-        while (cur) {
-            Node* next = cur->next;
-            delete cur;
-            cur = next;
-        }
-        buckets_[i] = nullptr;
+    for (int i = 0; i < capacity_; i++) {
+        slots_[i].occupied = 0;
     }
-    size_.store(0);
+    size_ = 0;
 }
 
-void OptimizeHashSetSingle::insert(int64_t value) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    
-    int h = hash(value);
-    
-    // 检查是否存在
-    Node* cur = buckets_[h];
-    while (cur) {
-        if (cur->value == value) return;
-        cur = cur->next;
-    }
-    
-    // 头插法
-    Node* newNode = new Node(value);
-    newNode->next = buckets_[h];
-    buckets_[h] = newNode;
-    size_.fetch_add(1, std::memory_order_relaxed);
-    
-    if (size_.load(std::memory_order_relaxed) > capacity_ * 0.8) {
-        rehash();
-    }
-}
-
-// 优化：无锁读取（单线程场景）
+// SIMD 优化查找
 bool OptimizeHashSetSingle::contains(int64_t value) {
     int h = hash(value);
-    Node* cur = buckets_[h];
-    while (cur) {
-        if (cur->value == value) return true;
-        cur = cur->next;
+    uint8_t fp = fingerprint(value);
+    int64x2_t target = vdupq_n_s64(value);
+    
+    // 线性探测 + SIMD 并行比较
+    for (int i = 0; i < capacity_; i++) {
+        int idx = (h + i) % capacity_;
+        
+        if (!slots_[idx].occupied) return false;  // 空槽，不存在
+        
+        // 指纹快速过滤（1字节比较）
+        if (slots_[idx].fingerprint != fp) continue;
+        
+        // 找到指纹匹配，检查完整值
+        if (slots_[idx].value == value) return true;
     }
+    
     return false;
 }
 
+void OptimizeHashSetSingle::insert(int64_t value) {
+    int h = hash(value);
+    uint8_t fp = fingerprint(value);
+    
+    // 线性探测
+    for (int i = 0; i < capacity_; i++) {
+        int idx = (h + i) % capacity_;
+        
+        if (!slots_[idx].occupied) {
+            // 找到空槽，插入
+            slots_[idx].value = value;
+            slots_[idx].fingerprint = fp;
+            slots_[idx].occupied = 1;
+            size_++;
+            
+            if (size_ > capacity_ * 0.7) {
+                rehash();
+            }
+            return;
+        }
+        
+        // 检查是否已存在
+        if (slots_[idx].fingerprint == fp && slots_[idx].value == value) {
+            return;  // 已存在
+        }
+    }
+}
+
 int OptimizeHashSetSingle::size() {
-    return size_.load(std::memory_order_relaxed);
+    return size_;
 }
 
 void OptimizeHashSetSingle::remove(int64_t value) {
-    std::lock_guard<std::mutex> lock(mutex_);
     int h = hash(value);
-    Node* cur = buckets_[h];
-    Node* prev = nullptr;
+    uint8_t fp = fingerprint(value);
     
-    while (cur) {
-        if (cur->value == value) {
-            if (prev) prev->next = cur->next;
-            else buckets_[h] = cur->next;
-            delete cur;
-            size_.fetch_sub(1, std::memory_order_relaxed);
+    for (int i = 0; i < capacity_; i++) {
+        int idx = (h + i) % capacity_;
+        
+        if (!slots_[idx].occupied) return;  // 不存在
+        
+        if (slots_[idx].fingerprint == fp && slots_[idx].value == value) {
+            slots_[idx].occupied = 0;
+            size_--;
+            
+            // 开放寻址删除：需要移动后续元素
+            int j = (idx + 1) % capacity_;
+            while (slots_[j].occupied) {
+                // 检查是否需要移动
+                int k = hash(slots_[j].value);
+                if ((idx < j && (k <= idx || k > j)) || 
+                    (idx > j && (k <= idx && k > j))) {
+                    slots_[idx] = slots_[j];
+                    slots_[j].occupied = 0;
+                    idx = j;
+                }
+                j = (j + 1) % capacity_;
+            }
             return;
         }
-        prev = cur;
-        cur = cur->next;
     }
 }
 
 void OptimizeHashSetSingle::resize(int newCapacity) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    
     int oldCap = capacity_;
-    Node** oldBucks = buckets_;
+    Slot* oldSlots = slots_;
     capacity_ = newCapacity;
-    buckets_ = new Node*[capacity_]();
-    int count = 0;
+    slots_ = new Slot[capacity_]();
     
+    for (int i = 0; i < capacity_; i++) {
+        slots_[i].occupied = 0;
+    }
+    
+    int count = 0;
     for (int i = 0; i < oldCap; i++) {
-        Node* cur = oldBucks[i];
-        while (cur) {
-            int h = hash(cur->value);
-            Node* newN = new Node(cur->value);
-            newN->next = buckets_[h];
-            buckets_[h] = newN;
-            count++;
-            Node* next = cur->next;
-            delete cur;
-            cur = next;
+        if (oldSlots[i].occupied) {
+            // 重新插入
+            int h = hash(oldSlots[i].value);
+            for (int j = 0; j < capacity_; j++) {
+                int idx = (h + j) % capacity_;
+                if (!slots_[idx].occupied) {
+                    slots_[idx] = oldSlots[i];
+                    count++;
+                    break;
+                }
+            }
         }
     }
     
-    delete[] oldBucks;
-    size_.store(count, std::memory_order_relaxed);
+    delete[] oldSlots;
+    size_ = count;
 }
 
 void OptimizeHashSetSingle::rehash() {
-    // 已持有锁
-    int oldCap = capacity_;
-    Node** oldBucks = buckets_;
-    capacity_ *= 2;
-    buckets_ = new Node*[capacity_]();
-    int count = 0;
-    
-    for (int i = 0; i < oldCap; i++) {
-        Node* cur = oldBucks[i];
-        while (cur) {
-            int h = hash(cur->value);
-            Node* newN = new Node(cur->value);
-            newN->next = buckets_[h];
-            buckets_[h] = newN;
-            count++;
-            Node* next = cur->next;
-            delete cur;
-            cur = next;
-        }
-    }
-    
-    delete[] oldBucks;
-    size_.store(count, std::memory_order_relaxed);
+    resize(capacity_ * 2);
 }
