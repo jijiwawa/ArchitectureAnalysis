@@ -1,84 +1,56 @@
 #include "hash_set.h"
 
 OptimizeHashSet::OptimizeHashSet() : capacity_(1024), size_(0) {
-    buckets_ = new std::atomic<Node*>[capacity_]();
-    for (int i = 0; i < capacity_; i++) {
-        buckets_[i].store(nullptr, std::memory_order_relaxed);
-    }
+    buckets_ = new Bucket[capacity_]();
 }
 
 OptimizeHashSet::~OptimizeHashSet() {
-    for (int i = 0; i < capacity_; i++) {
-        Node* cur = buckets_[i].load(std::memory_order_relaxed);
-        while (cur) {
-            Node* next = cur->next.load(std::memory_order_relaxed);
-            delete cur;
-            cur = next;
-        }
-    }
     delete[] buckets_;
 }
 
 void OptimizeHashSet::init() {
-    for (int i = 0; i < capacity_; i++) {
-        Node* cur = buckets_[i].load(std::memory_order_relaxed);
-        while (cur) {
-            Node* next = cur->next.load(std::memory_order_relaxed);
-            delete cur;
-            cur = next;
-        }
-        buckets_[i].store(nullptr, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> lock(buckets_[0].mutex);
+    
+    for (int i = 0; i < capacity_; ++i) {
+        buckets_[i].values.clear();
+        buckets_[i].fingerprints.clear();
     }
-    size_.store(0, std::memory_order_relaxed);
+    size_.store(0);
 }
 
-// 完全无锁读取
-bool OptimizeHashSet::contains(int64_t value) {
-    int h = hash(value);
-    Node* cur = buckets_[h].load(std::memory_order_acquire);
-    
-    while (cur) {
-        if (cur->value == value) {
-            return true;
-        }
-        cur = cur->next.load(std::memory_order_acquire);
-    }
-    
-    return false;
-}
-
-// CAS 插入
 void OptimizeHashSet::insert(int64_t value) {
     int h = hash(value);
+    std::lock_guard<std::mutex> lock(buckets_[h].mutex);
     
-    while (true) {
-        Node* head = buckets_[h].load(std::memory_order_acquire);
-        
-        // 检查是否存在
-        Node* cur = head;
-        while (cur) {
-            if (cur->value == value) return;
-            cur = cur->next.load(std::memory_order_acquire);
-        }
-        
-        // 创建新节点
-        Node* newNode = new Node(value);
-        newNode->next.store(head, std::memory_order_relaxed);
-        
-        // CAS 插入
-        if (buckets_[h].compare_exchange_weak(head, newNode,
-                std::memory_order_release, std::memory_order_relaxed)) {
-            size_.fetch_add(1, std::memory_order_relaxed);
-            
-            if (size_.load(std::memory_order_relaxed) > capacity_ * 0.8) {
-                rehash();
-            }
-            return;
-        }
-        
-        // CAS 失败，重试
-        delete newNode;
+    auto& values = buckets_[h].values;
+    uint8_t fp = fingerprint(value);
+    
+    // 检查是否存在
+    for (size_t i = 0; i < values.size(); i++) {
+        if (values[i] == value) return;
     }
+    
+    // 插入
+    buckets_[h].values.push_back(value);
+    buckets_[h].fingerprints.push_back(fp);
+    size_.fetch_add(1, std::memory_order_relaxed);
+}
+
+bool OptimizeHashSet::contains(int64_t value) {
+    int h = hash(value);
+    std::lock_guard<std::mutex> lock(buckets_[h].mutex);
+    
+    auto& values = buckets_[h].values;
+    auto& fingerprints = buckets_[h].fingerprints;
+    uint8_t fp = fingerprint(value);
+    
+    // 快速比较：先比较指纹，再比较完整值
+    for (size_t i = 0; i < values.size(); i++) {
+        if (fingerprints[i] == fp && values[i] == value) {
+            return true;
+        }
+    }
+    return false;
 }
 
 int OptimizeHashSet::size() {
@@ -86,47 +58,44 @@ int OptimizeHashSet::size() {
 }
 
 void OptimizeHashSet::remove(int64_t value) {
-    // 简化版：标记删除
     int h = hash(value);
-    Node* cur = buckets_[h].load(std::memory_order_acquire);
+    std::lock_guard<std::mutex> lock(buckets_[h].mutex);
     
-    while (cur) {
-        if (cur->value == value) {
-            cur->value = INT64_MIN;  // 标记删除
+    auto& values = buckets_[h].values;
+    auto& fingerprints = buckets_[h].fingerprints;
+    uint8_t fp = fingerprint(value);
+    
+    for (size_t i = 0; i < values.size(); i++) {
+        if (fingerprints[i] == fp && values[i] == value) {
+            // 交换删除
+            values[i] = values.back();
+            fingerprints[i] = fingerprints.back();
+            values.pop_back();
+            fingerprints.pop_back();
             size_.fetch_sub(1, std::memory_order_relaxed);
             return;
         }
-        cur = cur->next.load(std::memory_order_acquire);
     }
 }
 
 void OptimizeHashSet::resize(int newCapacity) {
+    std::lock_guard<std::mutex> lock(buckets_[0].mutex);
+    
     int oldCap = capacity_;
-    std::atomic<Node*>* oldBucks = buckets_;
+    Bucket* oldBucks = buckets_;
     capacity_ = newCapacity;
-    buckets_ = new std::atomic<Node*>[capacity_]();
-    
-    for (int i = 0; i < capacity_; i++) {
-        buckets_[i].store(nullptr, std::memory_order_relaxed);
-    }
-    
+    buckets_ = new Bucket[capacity_]();
     int count = 0;
+    
     for (int i = 0; i < oldCap; i++) {
-        Node* cur = oldBucks[i].load(std::memory_order_relaxed);
-        while (cur) {
-            Node* next = cur->next.load(std::memory_order_relaxed);
-            
-            if (cur->value != INT64_MIN) {
-                int h = hash(cur->value);
-                Node* newNode = new Node(cur->value);
-                newNode->next.store(buckets_[h].load(std::memory_order_relaxed),
-                                   std::memory_order_relaxed);
-                buckets_[h].store(newNode, std::memory_order_relaxed);
-                count++;
-            }
-            
-            delete cur;
-            cur = next;
+        auto& values = oldBucks[i].values;
+        auto& fingerprints = oldBucks[i].fingerprints;
+        
+        for (size_t j = 0; j < values.size(); j++) {
+            int h = hash(values[j]);
+            buckets_[h].values.push_back(values[j]);
+            buckets_[h].fingerprints.push_back(fingerprints[j]);
+            count++;
         }
     }
     
@@ -135,5 +104,24 @@ void OptimizeHashSet::resize(int newCapacity) {
 }
 
 void OptimizeHashSet::rehash() {
-    resize(capacity_ * 2);
+    int oldCap = capacity_;
+    Bucket* oldBucks = buckets_;
+    capacity_ *= 2;
+    buckets_ = new Bucket[capacity_]();
+    int count = 0;
+    
+    for (int i = 0; i < oldCap; i++) {
+        auto& values = oldBucks[i].values;
+        auto& fingerprints = oldBucks[i].fingerprints;
+        
+        for (size_t j = 0; j < values.size(); j++) {
+            int h = hash(values[j]);
+            buckets_[h].values.push_back(values[j]);
+            buckets_[h].fingerprints.push_back(fingerprints[j]);
+            count++;
+        }
+    }
+    
+    delete[] oldBucks;
+    size_.store(count, std::memory_order_relaxed);
 }
