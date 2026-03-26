@@ -88,17 +88,17 @@ echo "[2/4] 编译测试程序..."
 cd tests
 
 echo "      编译 test_functional_opt..."
-g++ -std=c++17 -O2 -pthread -I.. -DVERSION_optimize ../std/hash_set.cpp ../optimize/hash_set.cpp \
+g++ -std=c++17 -O3 -march=native -mtune=native -pthread -I.. -DVERSION_optimize ../std/hash_set.cpp ../optimize/hash_set.cpp \
     test_functional.cpp -o "$BUILD_DIR/test_functional_opt"
 echo "      完成"
 
 echo "      编译 test_single_version_optimize..."
-g++ -std=c++17 -O2 -pthread -I.. -DUSE_OPTIMIZE ../optimize/hash_set.cpp \
+g++ -std=c++17 -O3 -march=native -mtune=native -pthread -I.. -DUSE_OPTIMIZE ../optimize/hash_set.cpp \
     test_single_version.cpp -o "$BUILD_DIR/test_single_version_optimize"
 echo "      完成"
 
 echo "      编译 test_performance (含 base 对比)..."
-g++ -std=c++17 -O2 -pthread -I.. ../std/hash_set.cpp ../base/hash_set.cpp ../optimize/hash_set.cpp \
+g++ -std=c++17 -O3 -march=native -mtune=native -pthread -I.. ../std/hash_set.cpp ../base/hash_set.cpp ../optimize/hash_set.cpp \
     test_performance.cpp -o "$BUILD_DIR/test_performance"
 echo "      完成"
 
