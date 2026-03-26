@@ -4,17 +4,23 @@
 #include "../common/i_hash_set.h"
 #include "../common/node.h"
 #include <mutex>
+#include <atomic>
 
+// 优化版本：无锁size + 预分配 + 优化扩容
 class OptimizeHashSet : public IHashSet {
 private:
     Node** buckets_;
     int capacity_;
-    int size_;
+    std::atomic<int> size_;  // 原子计数
     std::mutex mutex_;
-
-    int hash(int64_t value) const;
+    
+    int hash(int64_t value) const {
+        // 简单hash，保持快速
+        int h = value % capacity_;
+        return h < 0 ? h + capacity_ : h;
+    }
+    
     void rehash();
-    bool containsLocked(int64_t value) const;
 
 public:
     OptimizeHashSet();
