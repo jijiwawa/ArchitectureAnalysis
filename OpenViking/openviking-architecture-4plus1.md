@@ -1,7 +1,7 @@
 # OpenViking 软件架构分析（4+1 视图）
 
-> 版本：v0.1（快速交付版）
-> 目标：基于仓库 README + docs + 代码结构，输出可交付的 4+1 视图初稿，并列出服务器侧潜在优化点。
+> 版本：v0.2（补充性能/过程视图/优化点）
+> 目标：在 v0.1 基础上补齐性能线索、过程视图细节与可执行优化点。
 
 ---
 
@@ -53,16 +53,25 @@
 
 ### 1.3 性能相关数据（当前可获取）
 
-文档中提到：
+当前文档可引用的性能线索（定性）：
 - **毫秒级延迟** 支持高并发检索（团队能力描述）。
 - `binding-client` 模式：AGFS 在 Python 进程内运行，**极高性能、零网络延迟**。
+- FAQ 建议：批量导入比单次导入更高效；本地存储/异步客户端降低延迟。
+
+当前文档可用于量化性能的“指标来源”：
+- **Operation Telemetry** 可返回结构化耗时指标：
+  - `summary.duration_ms`
+  - `summary.vector.scanned/scored/returned`
+  - `summary.resource.process.parse/summarize/finalize.duration_ms`
+  - `summary.memory.extract.*`（分阶段耗时）
+- 这些字段可直接形成性能报告（QPS/Latency/阶段耗时对比）。
 
 缺失：
-- 公开的 QPS/延迟/吞吐 benchmark。
-- 服务器端在不同存储后端的性能对比。
+- 公开的 QPS/延迟/吞吐 benchmark（目前无官方公开数据）。
 
 建议后续补充：
-- 通过 `docs/en/guides/07-operation-telemetry.md` 中的指标字段构建性能报告。
+- 用 telemetry 做基准实验：资源导入、检索、session.commit 端到端耗时曲线。
+- 对比不同存储后端（local / s3 / remote agfs）性能差异。
 
 ---
 
@@ -137,7 +146,7 @@ Messages → Compress → Archive → Memory Extract → Storage
   - 注册 routers（resources / search / sessions / filesystem / admin / debug...）
 
 - `openviking/retrieve/hierarchical_retriever.py`
-  - 目录递归检索算法
+  - 目录递归检索算法（递归搜索 + rerank + hotness）
 
 - `openviking/session/*`
   - session 压缩、记忆抽取、去重逻辑
@@ -149,21 +158,62 @@ Messages → Compress → Archive → Memory Extract → Storage
 ### 4.1 运行时组件
 
 - **OpenViking Server**（FastAPI）
-- **AGFS**（本地或远程）
+- **AGFS**（本地或远程 / binding-client / http-client）
 - **VectorDB**（本地或远程）
 - **QueueFS + Semantic Processor**（异步语义处理）
 - **Rerank 服务（可选）**
+- **TaskTracker**（异步任务跟踪，内存态）
 
-### 4.2 关键并发/异步机制
+### 4.2 核心处理链路（细化）
 
-- `QueueManager` 管理语义生成队列
-- `Session.commit()` 后台异步生成 L0/L1 + 记忆抽取
-- Retrieval 流程：vector recall + rerank
+#### A. add_resource（资源导入）
 
-### 4.3 可观测性
+```
+HTTP/SDK → ResourceService → ResourceProcessor
+    → Parser（No LLM）
+    → TreeBuilder（move temp → AGFS）
+    → SemanticQueue（L0/L1 异步生成）
+    → EmbeddingQueue / Vector Index
+```
 
-- `/metrics` 支持 Prometheus 指标
-- `telemetry` 指标记录资源处理、记忆抽取延迟等
+- Parser 与 LLM 解耦，LLM 仅在语义摘要阶段调用。
+- SemanticQueue 为底向上处理（Leaf → Parent）。
+- Telemetry 可直接记录解析/摘要/向量化耗时。
+
+#### B. search/find（检索链路）
+
+```
+Query → IntentAnalyzer(可选)
+      → Global Vector Search
+      → Hierarchical Recursive Search
+      → (Optional) Rerank
+      → MatchedContext
+```
+
+- `search()` 使用 LLM 生成多 TypedQuery；`find()` 低延迟直查。
+- HierarchicalRetriever 具备收敛机制、候选 score 传播、topk 控制。
+
+#### C. session.commit（记忆提交流程）
+
+```
+Phase1: Archive (sync) → Phase2: Memory Extract (async) → SemanticQueue
+```
+
+- Phase1: 归档消息 + 清理当前消息（无锁，快速返回）
+- Phase2: RedoLog + 记忆抽取 + 写入 + enqueue（支持 crash recovery）
+
+### 4.3 一致性/容错机制
+
+- **Path Lock**：POINT / SUBTREE / MV 锁（保证路径级一致性）
+- **RedoLog**：仅用于 session.commit 的 crash recovery（幂等恢复）
+- **QueueFS**：语义生成任务持久化，重启可恢复
+- **TaskTracker**：后台任务状态可查询（内存态，TTL 清理）
+
+### 4.4 可观测性（性能/链路）
+
+- Telemetry：`duration_ms` + `vector` + `resource` + `memory` 分阶段指标
+- Prometheus：`/metrics` 导出，便于 Grafana
+- 可基于 Telemetry 做性能评估基线
 
 ---
 
@@ -197,43 +247,60 @@ Messages → Compress → Archive → Memory Extract → Storage
 [Storage Workspace]
 ```
 
+### 5.3 配置与性能模式（补充）
+
+- **AGFS 模式**：
+  - `http-client`（默认，连接外部 AGFS 服务）
+  - `binding-client`（高性能，AGFS 直接在进程内运行）
+- **Storage Backend**：local / s3 / memory
+
 ---
 
-## 6. 服务器侧潜在优化点（初版）
+## 6. 服务器侧潜在优化点（增强版）
 
 ### 6.1 性能与可扩展性
 
-1. **Rerank 调用策略优化**
-   - 当前 search 默认 THINKING 时触发 rerank，可能增加延迟
-   - 优化：加入动态阈值或采样 rerank
+1. **Rerank 触发策略优化**
+   - 现状：`search()` 默认 THINKING 会触发 rerank
+   - 风险：高并发下 rerank 延迟放大
+   - 优化：引入 **基于置信度/候选数的动态 rerank**（低置信度才触发）
 
-2. **QueueFS 处理瓶颈**
-   - 异步语义生成依赖队列
-   - 优化：分级队列 + 并发控制 + 优先级调度
+2. **QueueFS 处理瓶颈（语义生成）**
+   - 现状：异步队列处理，单一队列粒度
+   - 优化：
+     - 分级队列（资源/记忆/技能）
+     - 优先级调度（用户请求优先，后台 watch 次之）
+     - 结合 telemetry 进行队列拥塞自适应
 
-3. **AGFS 存储后端**
-   - 本地模式性能高，但扩展性弱
-   - 优化：提供标准化 benchmark，对比 remote AGFS
+3. **Embedding/LLM 并发上限**
+   - 现状：max_concurrent_llm / embedding 固定
+   - 优化：通过 Telemetry 动态调整并发（峰值时降级）
+
+4. **Storage Backend 性能基线**
+   - 现状：缺少本地/远端/s3 系统对比基准
+   - 优化：基于 Telemetry 出具基准报告
 
 ### 6.2 稳定性与隔离
 
-4. **多租户隔离加强**
-   - 目前依赖 account/user/agent 逻辑隔离
-   - 优化：更严格的 tenant-aware ACL / token
+5. **TaskTracker 持久化**
+   - 现状：内存态任务跟踪，重启丢失
+   - 优化：落盘（轻量化本地 KV / QueueFS 持久化）
 
-5. **请求级限流与隔离**
-   - 现有服务无明显限流逻辑
-   - 优化：引入速率限制 / tenant quota
+6. **多租户限流与资源配额**
+   - 现状：基于 account/user/agent 隔离，但无配额
+   - 优化：
+     - tenant 级 QPS/并发限制
+     - 资源占用配额（storage/embedding token）
 
 ### 6.3 可观测性与诊断
 
-6. **Retrieval Trace 可视化增强**
-   - 已保留轨迹，但缺可视化工具集成
-   - 优化：输出 JSON trace + UI 展示
+7. **Retrieval Trace 输出标准化**
+   - 现状：轨迹日志存在，但缺统一格式
+   - 优化：标准 JSON Trace（可视化 UI 展示）
 
-7. **Telemetry 数据统一导出**
-   - 现有 telemetry 指标丰富，但缺统一分析面板
-   - 优化：提供 Grafana 模板
+8. **Telemetry + Prometheus 联动**
+   - 现状：有 telemetry 字段，但缺可视化模板
+   - 优化：提供 Grafana dashboard + PromQL 示例
 
 ---
 
@@ -249,8 +316,16 @@ Messages → Compress → Archive → Memory Extract → Storage
 
 - README.md
 - docs/en/concepts/01-architecture.md
+- docs/en/concepts/06-extraction.md
 - docs/en/concepts/07-retrieval.md
 - docs/en/concepts/08-session.md
+- docs/en/concepts/09-transaction.md
+- docs/en/concepts/11-multi-tenant.md
 - docs/en/guides/03-deployment.md
+- docs/en/guides/07-operation-telemetry.md
 - openviking/server/app.py
 - openviking/service/core.py
+- openviking/service/resource_service.py
+- openviking/retrieve/hierarchical_retriever.py
+- openviking/session/session.py
+- openviking/service/task_tracker.py
